@@ -2,6 +2,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
 const dotenv = require("dotenv");
 const { TaggedQuestion } = require("../models/TaggedQuestion");
+const mongoose = require("mongoose");
 dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
@@ -115,7 +116,18 @@ const getImageDescription = async (imageUrl) => {
 
 const saveToDatabase = async (taggedQuestion) => {
   try {
-    await TaggedQuestion.create(taggedQuestion);
+    const formattedQuestion = {
+      ...taggedQuestion,
+      structure: "OBJECTIVE", // Add the required 'structure' field
+      _id: new mongoose.Types.ObjectId(), // Generate a new ObjectId for _id
+      createdAt: new Date(), // Set the createdAt field to the current date
+    };
+
+    // Remove any fields that should not be saved in the database
+    delete formattedQuestion._id;
+    delete formattedQuestion.__v;
+
+    await TaggedQuestion.create(formattedQuestion);
     console.info(`Saved question with subject: ${taggedQuestion.subject}`);
   } catch (error) {
     console.error(`Error saving to database: ${error}`);
