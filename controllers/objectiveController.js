@@ -128,7 +128,6 @@ const saveToDatabase = async (taggedQuestion) => {
     delete formattedQuestion.__v;
 
     await TaggedQuestion.create(formattedQuestion);
-    console.info(`Saved question with subject: ${taggedQuestion.subject}`);
   } catch (error) {
     console.error(`Error saving to database: ${error}`);
     throw error;
@@ -232,7 +231,7 @@ const tagObjective = async (req, res) => {
       };
 
       await saveToDatabase(taggedQuestion);
-      console.info(`Saved question: ${taggedQuestion.text}`);
+      console.info(`Saved question with subject: ${taggedQuestion.subject}`);
       return taggedQuestion;
     });
 
