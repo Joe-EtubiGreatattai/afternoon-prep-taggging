@@ -1,4 +1,5 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const fs = require("fs");
 const axios = require("axios");
 const dotenv = require("dotenv");
 const { TaggedQuestion } = require("../models/TaggedQuestion");
@@ -121,6 +122,7 @@ const saveToDatabase = async (taggedQuestion) => {
       structure: "OBJECTIVE", // Add the required 'structure' field
       _id: new mongoose.Types.ObjectId(), // Generate a new ObjectId for _id
       createdAt: new Date(), // Set the createdAt field to the current date
+      updatedAt: new Date(), // Set the updatedAt field to the current date
     };
 
     // Remove any fields that should not be saved in the database
@@ -128,13 +130,14 @@ const saveToDatabase = async (taggedQuestion) => {
     delete formattedQuestion.__v;
 
     await TaggedQuestion.create(formattedQuestion);
+    console.info(`Saved question with subject: ${taggedQuestion.subject}`);
   } catch (error) {
     console.error(`Error saving to database: ${error}`);
     throw error;
   }
 };
 
-const rateLimit = async (tasks, rate = 13, interval = 60000) => {
+const rateLimit = async (tasks, rate = 6, interval = 120000) => {
   const results = [];
   const batches = [];
   for (let i = 0; i < tasks.length; i += rate) {
@@ -158,86 +161,110 @@ const tagObjective = async (req, res) => {
       });
     }
 
-    const questions = JSON.parse(req.file.buffer.toString());
+    let questions = JSON.parse(req.file.buffer.toString());
+    const originalQuestions = [...questions]; // Create a copy of the original questions
     console.log(`Received ${questions.length} questions`);
 
     const tasks = questions.map((question) => async () => {
-      const tagsInfo = await generateTagsAndAnswer(question);
+      try {
+        const tagsInfo = await generateTagsAndAnswer(question);
 
-      if (!tagsInfo) {
+        if (!tagsInfo) {
+          return null;
+        }
+
+        let gradeLevel;
+        switch (question.type?.toUpperCase()) {
+          case "WASSCE":
+          case "WAEC":
+          case "NECO":
+          case "JAMB":
+          case "UTME":
+          case "POST-UTME":
+            gradeLevel = 12;
+            break;
+          case "JCE":
+            gradeLevel = 9;
+            break;
+          case "GRE":
+            gradeLevel = "Post Graduate Studies";
+            break;
+          default:
+            gradeLevel = null;
+        }
+
+        const correctOptionsList = question.correctOption || [];
+
+        const optionsWithCorrectFlag = question.options.map((opt) => {
+          const isCorrect = correctOptionsList.includes(
+            opt.option.toUpperCase()
+          );
+          const personalityType =
+            {
+              A: 1,
+              B: 2,
+              C: 3,
+              D: 4,
+              E: 5,
+            }[opt.option.toUpperCase()] || null;
+
+          return {
+            ...opt,
+            correct: isCorrect,
+            personalityType,
+          };
+        });
+
+        let imageDescription = "";
+        if (question.imageUrl?.trim()) {
+          imageDescription = await getImageDescription(question.imageUrl);
+        }
+
+        const sectionID = "";
+
+        const taggedQuestion = {
+          ...question,
+          options: optionsWithCorrectFlag,
+          topic: tagsInfo.topics || [],
+          tags: tagsInfo.tags || [],
+          explanation: tagsInfo.explanation || "",
+          ai_answer: tagsInfo.answer || "",
+          difficulty: tagsInfo.difficultyLevel || "",
+          gradeLevel,
+          uploader: "ADMIN",
+          uploader_id: "653cb4945584360b20bf0089",
+          imageDescription,
+          sectionID,
+        };
+
+        await saveToDatabase(taggedQuestion);
+        console.info(`Saved question with subject: ${taggedQuestion.subject}`);
+
+        // Remove the tagged question from the questions array
+        questions = questions.filter((q) => q.text !== question.text);
+
+        return taggedQuestion;
+      } catch (error) {
+        console.error(`Error tagging question: ${error}`);
         return null;
       }
-
-      let gradeLevel;
-      switch (question.type?.toUpperCase()) {
-        case "WASSCE":
-        case "WAEC":
-        case "NECO":
-        case "JAMB":
-        case "UTME":
-        case "POST-UTME":
-          gradeLevel = 12;
-          break;
-        case "JCE":
-          gradeLevel = 9;
-          break;
-        case "GRE":
-          gradeLevel = "Post Graduate Studies";
-          break;
-        default:
-          gradeLevel = null;
-      }
-
-      const correctOptionsList = question.correctOption || [];
-
-      const optionsWithCorrectFlag = question.options.map((opt) => {
-        const isCorrect = correctOptionsList.includes(opt.option.toUpperCase());
-        const personalityType =
-          {
-            A: 1,
-            B: 2,
-            C: 3,
-            D: 4,
-            E: 5,
-          }[opt.option.toUpperCase()] || null;
-
-        return {
-          ...opt,
-          correct: isCorrect,
-          personalityType,
-        };
-      });
-
-      let imageDescription = "";
-      if (question.imageUrl?.trim()) {
-        imageDescription = await getImageDescription(question.imageUrl);
-      }
-
-      const sectionID = "";
-
-      const taggedQuestion = {
-        ...question,
-        options: optionsWithCorrectFlag,
-        topic: tagsInfo.topics || [],
-        tags: tagsInfo.tags || [],
-        explanation: tagsInfo.explanation || "",
-        ai_answer: tagsInfo.answer || "",
-        difficulty: tagsInfo.difficultyLevel || "",
-        gradeLevel,
-        uploader: "ADMIN",
-        uploader_id: "653cb4945584360b20bf0089",
-        imageDescription,
-        sectionID,
-      };
-
-      await saveToDatabase(taggedQuestion);
-      console.info(`Saved question with subject: ${taggedQuestion.subject}`);
-      return taggedQuestion;
     });
 
     const results = await rateLimit(tasks, 13, 60000);
 
-    res.status(200).json({ results });
+    // Save the remaining untagged questions to a file
+    if (questions.length > 0) {
+      const untaggedQuestionsFilePath = "untagged_questions.json";
+      fs.writeFileSync(
+        untaggedQuestionsFilePath,
+        JSON.stringify(questions, null, 2)
+      );
+      console.log(
+        `Saved ${questions.length} untagged questions to ${untaggedQuestionsFilePath}`
+      );
+    }
+
+    res.status(200).json({ results, originalQuestions });
   } catch (error) {
     console.error(`Error tagging questions: ${error}`);
     res.status(500).json({ message: "Internal server error." });
