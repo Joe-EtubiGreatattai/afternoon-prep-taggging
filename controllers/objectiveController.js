@@ -8,7 +8,11 @@ dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
-const generateTagsAndAnswer = async (question) => {
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const generateTagsAndAnswer = async (question, retryCount = 0) => {
+  const maxRetries = 5;
+
   try {
     let prompt = `Generate tagging (ensure you include if the question is a word problem or not as part of the tags, the difficulty should be between3 word Easy, Intermediate and Hard) and answer for this Question: '${question.text}'. Strictly based on Waec Standard. Just respond with only the following format below and select the correct answer option from the given options: \n\nDifficulty Level:\n\nGrade Level:\n\nTopics:\n\nTags:\n\nExplain Question:\n\nAnswer:`;
 
@@ -42,7 +46,44 @@ const generateTagsAndAnswer = async (question) => {
     return { ...question, ...parsedResponse };
   } catch (error) {
     console.error(`Error generating tags and answer: ${error}`);
-    throw error;
+
+    if (error.message.includes("429 Too Many Requests")) {
+      console.error(
+        "Rate limit exceeded. Waiting for 3 minutes before retrying..."
+      );
+      await delay(180000); // 3 minutes delay
+      return generateTagsAndAnswer(question, retryCount); // Retry immediately after delay
+    }
+
+    if (error.message.includes("Candidate was blocked due to SAFETY")) {
+      console.error(
+        "Safety error encountered. Waiting for 4 minutes before continuing..."
+      );
+      await delay(240000); // 4 minutes delay
+      return generateTagsAndAnswer(question, retryCount); // Retry immediately after delay
+    }
+
+    if (
+      error.message.includes("Network Error") ||
+      error.code === "ECONNABORTED"
+    ) {
+      if (retryCount < maxRetries) {
+        const retryDelay = Math.pow(2, retryCount) * 1000; // Exponential backoff
+        console.error(
+          `Network error. Retrying in ${
+            retryDelay / 1000
+          } seconds... (Attempt ${retryCount + 1}/${maxRetries})`
+        );
+        await delay(retryDelay);
+        return generateTagsAndAnswer(question, retryCount + 1); // Retry with incremented retryCount
+      } else {
+        console.error(
+          `Max retries reached. Could not process the question: ${question.text}`
+        );
+      }
+    }
+
+    throw error; // Rethrow the error if it's not handled
   }
 };
 
@@ -161,9 +202,13 @@ const tagObjective = async (req, res) => {
       });
     }
 
+    const index = parseInt(req.body.index, 10) || 0;
     let questions = JSON.parse(req.file.buffer.toString());
     const originalQuestions = [...questions]; // Create a copy of the original questions
     console.log(`Received ${questions.length} questions`);
+
+    // Adjust the starting point of the questions array
+    questions = questions.slice(index);
 
     const tasks = questions.map((question) => async () => {
       try {
@@ -222,6 +267,9 @@ const tagObjective = async (req, res) => {
 
         const sectionID = "";
 
+        // Add the subType field, defaulting to an empty string if not present
+        const subType = question.subType || "";
+
         const taggedQuestion = {
           ...question,
           options: optionsWithCorrectFlag,
@@ -235,6 +283,7 @@ const tagObjective = async (req, res) => {
           uploader_id: "653cb4945584360b20bf0089",
           imageDescription,
           sectionID,
+          subType, // Ensure the subType field is included
         };
 
         await saveToDatabase(taggedQuestion);

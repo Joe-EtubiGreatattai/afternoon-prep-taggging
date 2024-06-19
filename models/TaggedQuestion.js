@@ -9,7 +9,7 @@ const TaggedQuestionSchema = new Schema(
     year: { type: Number, required: true },
     subject: { type: String, required: true },
     type: { type: String, required: true },
-    subType: { type: String, required: true },
+    subType: { type: String, default: "" },
     flagged: { type: Boolean, default: false },
     flags: { type: Array, default: [] },
     structure: { type: String, required: true },
