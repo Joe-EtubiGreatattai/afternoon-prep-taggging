@@ -4,6 +4,8 @@ const mongoose = require("mongoose");
 const bodyParser = require("body-parser");
 const theoryController = require("./controllers/theoryController");
 const objectiveController = require("./controllers/objectiveController");
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpec = require("./swaggerDef");
 require("dotenv").config();
 
 const app = express();
@@ -31,8 +33,10 @@ mongoose
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error("MongoDB connection error:", err));
 
-
 // Routes
+// Swagger UI setup
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
 // Theory Tagging Endpoint
 app.post("/theory", theoryController.tagTheory);
 

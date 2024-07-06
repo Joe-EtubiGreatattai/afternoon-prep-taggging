@@ -6,9 +6,26 @@ const { TaggedQuestion } = require("../models/TaggedQuestion");
 const mongoose = require("mongoose");
 dotenv.config();
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const apiKeys = [
+  process.env.GOOGLE_API_KEY_1,
+  process.env.GOOGLE_API_KEY_2,
+  process.env.GOOGLE_API_KEY_3,
+  process.env.GOOGLE_API_KEY_4,
+  process.env.GOOGLE_API_KEY_5,
+  process.env.GOOGLE_API_KEY_6,
+  process.env.GOOGLE_API_KEY_7,
+];
+
+let currentKeyIndex = 0;
+
+const getNextApiKey = () => {
+  currentKeyIndex = (currentKeyIndex + 1) % apiKeys.length;
+  return apiKeys[currentKeyIndex];
+};
+
+let genAI = new GoogleGenerativeAI(apiKeys[currentKeyIndex]);
 
 const generateTagsAndAnswer = async (question, retryCount = 0) => {
   const maxRetries = 5;
@@ -48,11 +65,10 @@ const generateTagsAndAnswer = async (question, retryCount = 0) => {
     console.error(`Error generating tags and answer: ${error}`);
 
     if (error.message.includes("429 Too Many Requests")) {
-      console.error(
-        "Rate limit exceeded. Waiting for 3 minutes before retrying..."
-      );
-      await delay(180000); // 3 minutes delay
-      return generateTagsAndAnswer(question, retryCount); // Retry immediately after delay
+      console.error("Rate limit exceeded. Switching to the next API key...");
+      genAI = new GoogleGenerativeAI(getNextApiKey()); // Switch to the next API key
+      await delay(1000); // Short delay before retrying
+      return generateTagsAndAnswer(question, retryCount); // Retry immediately with new key
     }
 
     if (error.message.includes("Candidate was blocked due to SAFETY")) {
@@ -193,6 +209,54 @@ const rateLimit = async (tasks, rate = 6, interval = 120000) => {
   }
   return results;
 };
+
+/**
+ * @swagger
+ * /tagObjective:
+ *   post:
+ *     summary: Tag objective questions with difficulty level, grade level, topics, tags, explanation, and answer.
+ *     consumes:
+ *       - multipart/form-data
+ *     parameters:
+ *       - in: formData
+ *         name: file
+ *         type: file
+ *         description: The input file containing the questions.
+ *         required: true
+ *       - in: formData
+ *         name: index
+ *         type: integer
+ *         description: The starting index for processing questions.
+ *         required: false
+ *     responses:
+ *       200:
+ *         description: Successfully tagged questions.
+ *         schema:
+ *           type: object
+ *           properties:
+ *             results:
+ *               type: array
+ *               items:
+ *                 type: object
+ *             originalQuestions:
+ *               type: array
+ *               items:
+ *                 type: object
+ *       400:
+ *         description: Invalid request body. Input file is required.
+ *         schema:
+ *           type: object
+ *           properties:
+ *             message:
+ *               type: string
+ *       500:
+ *         description: Internal server error.
+ *         schema:
+ *           type: object
+ *           properties:
+ *             message:
+ *               type: string
+ */
 
 const tagObjective = async (req, res) => {
   try {
